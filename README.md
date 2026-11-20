@@ -2,12 +2,14 @@
 
 **Play:** https://clrke.github.io/ghost-chain/
 
-A one-level prototype of a daily co-op game idea for Reddit's Game of the Day Hackathon:
+A prototype of a daily co-op game idea for Reddit's Game of the Day Hackathon:
 **a level nobody can finish alone.**
 
 - Standing on a **plate** opens its **gate**, but only while someone stands there.
 - Every run is recorded (one input per tick at 60 ticks/s) and saved as a **ghost** that replays it exactly.
 - Each player is helped by the ghosts of earlier players, and becomes a ghost for the next one.
+
+Four levels (one per day, or pick with < >): Two Gates, Both Hands (a gate needing two plates at once), Relay of Four, and Both Sides.
 
 Two modes:
 - **Join today's chain:** two pre-recorded "strangers" (u/ana, u/ben) hold the gates; you're link #3.

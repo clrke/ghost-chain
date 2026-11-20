@@ -10,19 +10,60 @@
   var ROOM = { x0: 30, y0: 40, x1: 570, y1: 980 };
   var R = 18, SPEED = 250, TPS = 60, DT = 1 / TPS, RUN_TICKS = 12 * TPS;
   var GAP = [232, 368];
-  var GATES = [{ y: 650, plate: 0 }, { y: 360, plate: 1 }];
-  var PLATES = [{ x: 115, y: 800, s: 84 }, { x: 485, y: 500, s: 84 }];
-  var EXIT = { x: 300, y: 165, r: 34 };
   var START = { x: 300, y: 920 };
-  var COLORS = ['#ff8a5c', '#5cc8ff', '#7dffb0', '#ff7ad9', '#c9a4ff'];
+  var COLORS = ['#ff8a5c', '#5cc8ff', '#7dffb0', '#ff7ad9', '#c9a4ff', '#9dff5c'];
   var YOU_COLOR = '#ffe066';
+  var END = 12 * 60;
 
-  var WALLS = [];
-  GATES.forEach(function (g) {
-    WALLS.push([ROOM.x0, g.y - 9, GAP[0], g.y + 9]);
-    WALLS.push([GAP[1], g.y - 9, ROOM.x1, g.y + 9]);
-  });
+  // Levels. A gate opens when ANY of its `any` plates is held, or when ALL of its `all` plates are.
+  // `bots` are the scripted strangers for "Join today's chain": waypoints [x, y, holdUntilTick].
+  var LEVELS = [
+    { name: 'Two Gates', people: 3, exit: { x: 300, y: 165 },
+      plates: [{ x: 115, y: 800 }, { x: 485, y: 500 }],
+      gates: [{ y: 650, any: [0] }, { y: 360, any: [1] }],
+      tip: ['Hold PLATE 1 so the next player can pass GATE 1.', 'Go through Gate 1 and hold PLATE 2.'],
+      bots: [['u/ana', [[115, 800, 260], [190, 880, END]]],
+             ['u/ben', [[300, 705, 0], [300, 705, 75], [300, 560, 0], [485, 500, 330], [420, 430, END]]]] },
+    { name: 'Both Hands', people: 3, exit: { x: 300, y: 200 },
+      plates: [{ x: 115, y: 800 }, { x: 485, y: 800 }],
+      gates: [{ y: 560, all: [0, 1] }],
+      tip: ['The gate needs BOTH plates. Hold one of them.', 'Hold the other plate, together with your ghost.'],
+      bots: [['u/kai', [[115, 800, 330], [200, 900, END]]],
+             ['u/mo', [[485, 800, 360], [400, 900, END]]]] },
+    { name: 'Relay of Four', people: 4, exit: { x: 300, y: 150 },
+      plates: [{ x: 110, y: 880 }, { x: 490, y: 650 }, { x: 110, y: 430 }],
+      gates: [{ y: 760, any: [0] }, { y: 540, any: [1] }, { y: 320, any: [2] }],
+      tip: ['Hold PLATE 1, by the start.', 'Pass Gate 1 and hold PLATE 2.', 'Pass Gates 1 and 2, then hold PLATE 3.'],
+      bots: [['u/ana', [[110, 880, 300], [200, 940, END]]],
+             ['u/ben', [[300, 800, 0], [300, 800, 60], [300, 700, 0], [490, 650, 420], [420, 700, END]]],
+             ['u/cleo', [[300, 800, 0], [300, 800, 90], [300, 700, 0], [300, 600, 0], [300, 600, 150], [300, 480, 0], [110, 430, 480], [200, 470, END]]]] },
+    { name: 'Both Sides', people: 3, exit: { x: 300, y: 165 },
+      plates: [{ x: 110, y: 820 }, { x: 490, y: 520 }],
+      gates: [{ y: 660, any: [0, 1] }, { y: 360, all: [0, 1] }],
+      tip: ['Hold PLATE 1: it opens Gate 1, and Gate 2 needs it too.', 'Pass Gate 1 and hold PLATE 2. Gate 2 needs both plates.'],
+      bots: [['u/kai', [[110, 820, 330], [200, 900, END]]],
+             ['u/mo', [[300, 700, 0], [300, 700, 70], [300, 600, 0], [490, 520, 400], [420, 560, END]]]] },
+  ];
+
+  var LEVEL, GATES, PLATES, EXIT, WALLS, STRANGERS;
   function gateRect(g) { return [GAP[0], g.y - 9, GAP[1], g.y + 9]; }
+  function loadLevel(i) {
+    LEVEL = LEVELS[i]; LEVEL.index = i;
+    PLATES = LEVEL.plates.map(function (p) { return { x: p.x, y: p.y, s: 84 }; });
+    GATES = LEVEL.gates; EXIT = { x: LEVEL.exit.x, y: LEVEL.exit.y, r: 34 };
+    WALLS = [];
+    GATES.forEach(function (g) {
+      WALLS.push([ROOM.x0, g.y - 9, GAP[0], g.y + 9]);
+      WALLS.push([GAP[1], g.y - 9, ROOM.x1, g.y + 9]);
+    });
+    STRANGERS = [];
+    LEVEL.bots.forEach(function (b, k) {
+      var ghost = { name: b[0], color: COLORS[k % COLORS.length] };
+      ghost.inputs = simulate(STRANGERS.slice(), RUN_TICKS, botController(b[1])).inputs;
+      STRANGERS.push(ghost);
+    });
+  }
+  function gateNeeds(g) { return g.all || g.any; }
 
   var DIRS = [[0, 0]];
   for (var d = 0; d < 8; d++) DIRS.push([Math.cos(d * Math.PI / 4), Math.sin(d * Math.PI / 4)]);
@@ -38,7 +79,10 @@
     return p.x > pl.x - h && p.x < pl.x + h && p.y > pl.y - h && p.y < pl.y + h;
   }
   function gatesOpen(agents) {
-    return GATES.map(function (g) { return agents.some(function (a) { return onPlate(a, g.plate); }); });
+    var held = PLATES.map(function (p, i) { return agents.some(function (a) { return onPlate(a, i); }); });
+    return GATES.map(function (g) {
+      return g.all ? g.all.every(function (i) { return held[i]; }) : g.any.some(function (i) { return held[i]; });
+    });
   }
   function pushOut(p, r) {
     var cx = Math.max(r[0], Math.min(p.x, r[2])), cy = Math.max(r[1], Math.min(p.y, r[3]));
@@ -90,13 +134,8 @@
       return 0;
     };
   }
-  var STRANGERS = (function () {
-    var ana = { name: 'u/ana', color: COLORS[0] };
-    ana.inputs = simulate([], RUN_TICKS, botController([[115, 800, 260], [190, 880, RUN_TICKS]])).inputs;
-    var ben = { name: 'u/ben', color: COLORS[1] };
-    ben.inputs = simulate([ana], RUN_TICKS, botController([[300, 705, 0], [300, 705, 75], [300, 560, 0], [485, 500, 330], [420, 430, RUN_TICKS]])).inputs;
-    return [ana, ben];
-  })();
+  function dayIndex() { return Math.floor(Date.now() / 86400000); }
+  loadLevel(dayIndex() % LEVELS.length);
 
   // ---- game state --------------------------------------------------------
   var S = {
@@ -182,7 +221,9 @@
     buttons.push({ x: x, y: y, w: w, h: h, fn: fn });
   }
 
-  function drawWorld(open, time) {
+  function drawWorld(agents, time) {
+    var open = gatesOpen(agents);
+    var held = PLATES.map(function (p, i) { return agents.some(function (a) { return onPlate(a, i); }); });
     g.save(); g.translate(0, TOP);
     g.fillStyle = '#171a2b'; rr(ROOM.x0, ROOM.y0, ROOM.x1 - ROOM.x0, ROOM.y1 - ROOM.y0, 16); g.fill();
     g.strokeStyle = '#232843'; g.lineWidth = 1;
@@ -190,11 +231,11 @@
     for (var y = ROOM.y0 + 45; y < ROOM.y1; y += 45) { g.beginPath(); g.moveTo(ROOM.x0, y); g.lineTo(ROOM.x1, y); g.stroke(); }
     g.strokeStyle = '#3d4466'; g.lineWidth = 6; rr(ROOM.x0, ROOM.y0, ROOM.x1 - ROOM.x0, ROOM.y1 - ROOM.y0, 16); g.stroke();
     PLATES.forEach(function (p, i) {
-      var on = open[i], h = p.s / 2;
+      var on = held[i], h = p.s / 2;
       g.save(); if (on) { g.shadowColor = '#7dffb0'; g.shadowBlur = 28; }
       g.fillStyle = on ? '#2fbf72' : '#2c3350'; rr(p.x - h, p.y - h, p.s, p.s, 12); g.fill(); g.restore();
       g.strokeStyle = on ? '#b9ffd6' : '#4b5580'; g.lineWidth = 3; rr(p.x - h, p.y - h, p.s, p.s, 12); g.stroke();
-      txt('PLATE ' + (i + 1), p.x, p.y + h + 18, 15, '#8d96c2', 'center', 800);
+      txt('P' + (i + 1), p.x, p.y + h + 18, 15, '#8d96c2', 'center', 800);
     });
     GATES.forEach(function (gt, i) {
       g.fillStyle = '#3d4466';
@@ -202,10 +243,13 @@
       var col = open[i] ? '#3ddc84' : '#ff5470';
       if (!open[i]) { g.fillStyle = col; g.fillRect(GAP[0], gt.y - 7, GAP[1] - GAP[0], 14); }
       else { g.fillStyle = col; g.fillRect(GAP[0], gt.y - 7, 10, 14); g.fillRect(GAP[1] - 10, gt.y - 7, 10, 14); }
-      var pl = PLATES[gt.plate];
-      g.strokeStyle = col; g.lineWidth = 2; g.setLineDash([4, 6]); g.beginPath();
-      g.moveTo(pl.x, pl.y - pl.s / 2 - (i === 0 ? 0 : 0)); g.lineTo(i === 0 ? GAP[0] - 6 : GAP[1] + 6, gt.y + 12); g.stroke(); g.setLineDash([]);
-      txt('GATE ' + (i + 1), i === 0 ? GAP[1] + 70 : GAP[0] - 70, gt.y - 24, 15, col, 'center', 800);
+      gateNeeds(gt).forEach(function (pi) {
+        var pl = PLATES[pi], gx = pl.x < 300 ? GAP[0] - 6 : GAP[1] + 6, gy = pl.y > gt.y ? gt.y + 12 : gt.y - 12;
+        g.strokeStyle = held[pi] ? '#3ddc84' : '#ff5470'; g.lineWidth = 2; g.setLineDash([4, 6]); g.beginPath();
+        g.moveTo(pl.x, pl.y + (pl.y > gt.y ? -pl.s / 2 : pl.s / 2)); g.lineTo(gx, gy); g.stroke(); g.setLineDash([]);
+      });
+      var need = gateNeeds(gt).map(function (k) { return 'P' + (k + 1); }).join(gt.all ? ' + ' : ' or ');
+      txt('GATE ' + (i + 1) + ' · ' + need, i % 2 ? 140 : 460, gt.y - 24, 15, col, 'center', 800);
     });
     g.save(); g.translate(EXIT.x, EXIT.y);
     for (var k = 0; k < 3; k++) { g.strokeStyle = 'rgba(190,140,255,' + (0.85 - k * 0.25) + ')'; g.lineWidth = 5;
@@ -247,7 +291,7 @@
 
   function drawHud(time) {
     txt('GHOST CHAIN', 24, 34, 28, '#ffffff', 'left', 900);
-    txt('Day 312 · this level needs 3 people', 24, 66, 16, '#8d96c2', 'left', 600);
+    txt('Day ' + (dayIndex() % 1000) + ' · ' + LEVEL.name + ' · needs ' + LEVEL.people + ' people', 24, 66, 16, '#8d96c2', 'left', 600);
     var names = S.chain.map(function (c) { return { n: c.name, c: c.color }; });
     names.push({ n: 'YOU', c: YOU_COLOR });
     var x = 24, y = 94;
@@ -268,32 +312,36 @@
   function hint() {
     if (S.mode === 'join') return 'Ghosts hold the gates for you. Reach the EXIT before they leave.';
     var n = S.chain.length + 1;
-    if (n === 1) return 'Link 1: stand on PLATE 1 to hold GATE 1 open for the next player.';
-    if (n === 2) return 'Link 2: your ghost holds Gate 1. Go through and hold PLATE 2.';
-    return 'Link ' + n + ': both ghosts hold the gates. Reach the EXIT!';
+    if (n < LEVEL.people && LEVEL.tip[n - 1]) return 'Link ' + n + ': ' + LEVEL.tip[n - 1];
+    return 'Link ' + n + ': your ghosts hold the gates. Reach the EXIT!';
   }
 
   // ---- screens -----------------------------------------------------------
   function drawMenu(time) {
-    drawWorld([false, false], time);
+    drawWorld([], time);
     g.fillStyle = 'rgba(8,9,16,0.84)'; g.fillRect(0, 0, LW, LH);
-    txt('GHOST CHAIN', LW / 2, 230, 56, '#ffffff', 'center', 900);
-    txt('A level nobody can finish alone', LW / 2, 290, 24, YOU_COLOR, 'center', 700);
+    txt('GHOST CHAIN', LW / 2, 190, 56, '#ffffff', 'center', 900);
+    txt('A level nobody can finish alone', LW / 2, 248, 24, YOU_COLOR, 'center', 700);
     var lines = ['Standing on a PLATE opens its GATE,', 'but only while someone stands there.',
       'Every run is saved as a ghost that replays', 'exactly, and helps the next player through.'];
-    lines.forEach(function (l, i) { txt(l, LW / 2, 360 + i * 32, 19, '#aab2dd', 'center', 600); });
+    lines.forEach(function (l, i) { txt(l, LW / 2, 300 + i * 29, 18, '#aab2dd', 'center', 600); });
+    var li = LEVEL.index;
+    button('<', 40, 460, 70, 56, function () { S.loadLevel((li + LEVELS.length - 1) % LEVELS.length); }, false);
+    button('>', 490, 460, 70, 56, function () { S.loadLevel((li + 1) % LEVELS.length); }, false);
+    txt('Level ' + (li + 1) + '/' + LEVELS.length + ': ' + LEVEL.name, LW / 2, 480, 22, '#ffffff', 'center', 800);
+    txt('needs ' + LEVEL.people + ' people' + (li === dayIndex() % LEVELS.length ? ' · today\'s level' : ''), LW / 2, 506, 15, '#8d96c2', 'center', 600);
     button('Join today\'s chain', 90, 540, 420, 70, startJoin, true);
-    txt('u/ana and u/ben already played. You\'re link #3.', LW / 2, 632, 16, '#8d96c2', 'center', 600);
+    txt(STRANGERS.map(function (s) { return s.name; }).join(', ') + ' already played. You\'re link #' + LEVEL.people + '.', LW / 2, 632, 16, '#8d96c2', 'center', 600);
     button('Build a chain yourself', 90, 690, 420, 70, startFresh, false);
-    txt('Play link 1, then 2, then 3, helped by your own ghosts.', LW / 2, 782, 16, '#8d96c2', 'center', 600);
+    txt('Play every link yourself, helped by your own ghosts.', LW / 2, 782, 16, '#8d96c2', 'center', 600);
     txt('Move: drag your finger, or arrow keys / WASD', LW / 2, 900, 16, '#555c80', 'center', 700);
-    txt('Prototype · one level · ghosts are stored only in this tab', LW / 2, 1120, 14, '#555c80', 'center', 600);
+    txt('Prototype · ' + LEVELS.length + ' levels · ghosts are stored only in this tab', LW / 2, 1120, 14, '#555c80', 'center', 600);
   }
 
   function drawPlay(time) {
     var agents = S.ghostPos.concat([S.me]);
     var open = gatesOpen(agents);
-    drawWorld(open, time);
+    drawWorld(agents, time);
     S.chain.forEach(function (c, i) {
       var li = S.screen === 'run' ? leavesIn(i) : null;
       drawAgent(S.ghostPos[i], c.color, 'ghost · ' + c.name, true, li !== null ? 'leaves ' + li.toFixed(1) + 's' : null);
@@ -336,11 +384,11 @@
       button('Menu', 90, 772, 420, 60, function () { S.screen = 'menu'; }, false);
     } else if (S.mode === 'fresh') {
       txt('Run saved as ghost #' + r.link, LW / 2, 370, 34, r.ghost.color, 'center', 900);
-      var tip = r.link === 1 ? 'Did you hold Plate 1? Now play link 2 with it.'
-        : r.link === 2 ? 'Did you hold Plate 2? Now play link 3.' : 'Add another link, or redo this one.';
+      var tip = r.link < LEVEL.people ? 'Now play link #' + (r.link + 1) + ' with your ghost' + (r.link > 1 ? 's.' : '.')
+        : 'Add another link, or redo this one.';
       txt(tip, LW / 2, 420, 18, '#aab2dd', 'center', 600);
       txt('Ghosts replay your exact inputs, so timing matters.', LW / 2, 452, 16, '#8d96c2', 'center', 600);
-      if (r.link < 5) button('Play link #' + (r.link + 1), 90, 520, 420, 66, function () { S.chain.push(r.ghost); startRun(); }, true);
+      if (r.link < LEVEL.people + 2) button('Play link #' + (r.link + 1), 90, 520, 420, 66, function () { S.chain.push(r.ghost); startRun(); }, true);
       button('Redo link #' + r.link, 90, 610, 420, 60, startRun, false);
       button('Start over', 90, 690, 420, 60, startFresh, false);
       button('Menu', 90, 770, 420, 60, function () { S.screen = 'menu'; }, false);
@@ -382,6 +430,6 @@
   requestAnimationFrame(frame);
 
   // exposed for tests
-  S.simulate = simulate; S.botController = botController; S.STRANGERS = STRANGERS; S.RUN_TICKS = RUN_TICKS;
+  S.simulate = simulate; S.botController = botController; S.LEVELS = LEVELS; S.loadLevel = function (i) { loadLevel(i); S.STRANGERS = STRANGERS; S.LEVEL = LEVEL; }; S.loadLevel(LEVEL.index); S.RUN_TICKS = RUN_TICKS;
   S.step = step; S.startRun = startRun;
 })();
